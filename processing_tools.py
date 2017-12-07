@@ -1,6 +1,8 @@
 import pandas as pd
 import string
+import os
 from fuzzywuzzy import fuzz
+import glob
 
 def clean_name(filename, col_names=[]):
 	"""
@@ -24,6 +26,8 @@ def clean_name(filename, col_names=[]):
 		print("Cleaning %s..." % col_name)
 		print("Cutting...")
 		file[col_name] = file[col_name].str.split(",",expand=True)[0]
+		# file.iloc[0][col_name] = tuple(str(file.iloc[0][col_name]))
+		# file.iloc[0][col_name] = tuple(str(file.iloc[1][col_name]))
 		file[col_name] = file[col_name].str.partition("A CORP")[0]
 		file[col_name] = file[col_name].str.partition("CORPORATION")[0]
 		file[col_name] = file[col_name].str.partition("LIMITED")[0]
@@ -40,8 +44,11 @@ def clean_name(filename, col_names=[]):
 		file[col_name] = file[col_name].str.replace(r'  +', ' ')
 
 	print("Saving file...")
-	save_name = filename.split('.')[0]
-	file.to_csv("%s-cleaned.csv" % save_name, sep='|', index = False)
+	save_name = filename.split('/')[1].split('.')[0] + '-cleaned.csv'
+	save_dir = filename.split('/')[0] + '-cleaned'
+	if not os.path.exists(save_dir):
+		os.makedirs(save_dir)
+	file.to_csv('/'.join([save_dir, save_name]), sep='|', index = False)
 	return file
 
 def split_file(filename, col_name):
@@ -90,31 +97,34 @@ def find_inventor(patent, assignments, helper, col_assignid='assignment_id'):
 
 	assignments_list = [{'PublicationID':patent, 'assignment_id': assignments.iloc[0][col_assignid], 'STATUS': 'CREATE'}]
 	if len(helper) == 0:
-		print("Use default...")
+		#print("Use default...")
 		return assignments_list, 0
-
-	rows = assignments.iterrows()
-	counter = 0
-	target_name = helper.iloc[0]['standard_name']
 
 	# TODO:
 	# 1. use all the helpers bu for loop
 	# 2. record the details for not match cases
 	# 3. use table manipulation
-	assignments_dic = {}
-	for counter, row in rows:
-		match_ratio = fuzz.ratio(str(row['assignee_name']), str(target_name))
-		patent_assignment_id = str(row[col_assignid])
-		if match_ratio > 0.7:
-			# patent_assignments = patent_assignments.iloc[counter:]
-			print("Found!")
-			assignments_dic[patent_assignment_id] = "CREATE"
-			assignments_list =[{'PublicationID':patent, 'assignment_id':key,'STATUS':assignments_dic[key]} for key in assignments_dic]
-			return assignments_list, 2
-		else:
-			assignments_dic[patent_assignment_id] = "DROP"
+	rows = assignments.iterrows()
+	helper_rows = helper.iterrows()
+	counter = 0
+	# target_name = helper.iloc[0]['standard_name']
 
-	print("Not match, Use default...")
+	for _, helper_row in helper_rows:
+		target_name = str(helper_row['standard_name'])
+		assignments_dic = {}
+		for counter, row in rows:
+			match_ratio = fuzz.ratio(str(row['assignee_name']), str(target_name))
+			patent_assignment_id = str(row[col_assignid])
+			if match_ratio > 0.7:
+				# patent_assignments = patent_assignments.iloc[counter:]
+				#print("Found!")
+				assignments_dic[patent_assignment_id] = "CREATE"
+				assignments_list =[{'PublicationID':patent, 'assignment_id':key,'STATUS':assignments_dic[key]} for key in assignments_dic]
+				return assignments_list, 2
+			else:
+				assignments_dic[patent_assignment_id] = "DROP"
+
+	#print("Not match, Use default...")
 	return assignments_list, 1
 
 
@@ -125,9 +135,13 @@ def uspto_with_inventor(uspto, helpers):
 	uspto(string or pd.DataFrame)
 	helpers(string or pd.DataFrame)
 	"""
-
+	log_static_name = 'log-statics/' + uspto.split('/')[1].split('.')[0] + '-statics.txt'
+	log_name = 'log-marks/' + uspto.split('/')[1].split('.')[0] + '-marks.txt'
+	result_name = 'uspto-with-inventor/' + uspto.split('/')[1].split('.')[0] + '-inventor.csv'
+	log_static = open(log_static_name, 'a')
 	print("Loading upsto...")
 	if type(uspto) == str:
+		log_static.write(uspto)
 		uspto = pd.read_csv(uspto, sep = '|', dtype=object)
 	print("Loading helpers...")
 	if type(helpers) == str:
@@ -138,25 +152,28 @@ def uspto_with_inventor(uspto, helpers):
 
 	counter = 0
 	result_counter = {'No helper':0, 'Not match':0, 'Match':0}
-	log = open('find_inventor_log.txt', 'w')
+
+	
+	log = open(log_name, 'a')
 	for patent in patents:
 		original_assignments = uspto[uspto['PublicationID'] == patent]
 		helper = helpers[helpers['patent'] == patent]
 		print("Finding inventor for %s..." % patent)
-		log.writelines("Finding inventor for %s..." % patent)
+		log.write("Finding inventor for %s...\n" % patent)
 		patent_inventor, result = find_inventor(patent, original_assignments, helper)
 		if result == 0:
 			result_counter['No helper'] += 1
-			log.writelines('No helper')
+			log.writelines('No helper\n')
 		elif result == 1:
 			result_counter['Not match'] += 1
-			log.writelines('Not match')
+			log.write('Not match\n')
 		else:
 			result_counter['Match'] += 1
-			log.writelines('Match')
+			log.write('Match\n')
+
 		for patent in patent_inventor:
-			for key in patent:
-				log.write('%s : %s,' % (key, patent[key]))
+				for key in patent:
+					log.write('%s : %s,\n' % (key, patent[key]))
 
 		patent_inventors += patent_inventor
 		# counter += 1
@@ -165,8 +182,12 @@ def uspto_with_inventor(uspto, helpers):
 	log.close()
 
 	print("Find inventors result:")
+	log_static.write("Find inventors result:\n")
 	for key in result_counter:
 		print('%s : %d' % (key, result_counter[key]))
+		log_static.write('%s : %d\n' % (key, result_counter[key]))
+
+	log_static.close()
 
 	print("Marking inventors in uspto...")
 	mark = pd.DataFrame(patent_inventors)
@@ -185,7 +206,7 @@ def uspto_with_inventor(uspto, helpers):
 		save_name = uspto.split('.')[0]
 	else:
 		save_name = 'uspto'
-	result.to_csv("%s-inventor-marked.csv" % save_name, sep='|', index = False)
+	result.to_csv(result_name, sep='|', index = False)
 	return result
 
 
@@ -221,7 +242,7 @@ def uspto_to_transaction(uspto):
 	transaction.to_csv("transaction_for_test.csv", sep='|', index = False)
 	return transaction
 
-def get_paired_files(uspto_dir, uspto_prefix, helper_dir, helper_prefix):
+def get_paired_files(uspto_dir, helper_dir):
 	"""
 	Get a paired files of uspto and helper.
 	Input:
@@ -231,16 +252,16 @@ def get_paired_files(uspto_dir, uspto_prefix, helper_dir, helper_prefix):
 	helper_prefix
 	"""
 	
-	uspto_files = glob.glob('uspto_root/*')
-	helper_files = glob.glob('helper_root/*')
+	uspto_files = glob.glob('/'.join([uspto_dir,'*']))
+	helper_files = glob.glob('/'.join([helper_dir,'*']))
 
 	# TODO:
 	# there is no corresponding file existing
 	paired_files = []
 	for uspto_file in uspto_files:
-		uspto_file_no = uspto_file.split('/')[1].split['-'][2]
+		uspto_file_no = uspto_file.split('/')[1].split('-')[1]
 		for helper_file in helper_files:
-			helper_file_no = helper_file.split('/')[1].split['-'][2]
+			helper_file_no = helper_file.split('/')[1].split('-')[1]
 			if uspto_file_no == helper_file_no:
 				paired_files.append([uspto_file, helper_file])
 				break
@@ -249,13 +270,14 @@ def get_paired_files(uspto_dir, uspto_prefix, helper_dir, helper_prefix):
 
 
 def output_dir(output_folder, output_prefix):
+	return 0
 
 def main():
 	# uspto = clean_name('new_USPTO/new_USPTO-3-149774.csv', ['assignee_name','assignor_name'])
 	# helpers = clean_name('helper/helper-3-70367.csv', ['standard_name'])
 	# uspto_with_inventor('new_USPTO/new_USPTO-3-149774-cleaned.csv', 'helper/helper-3-70367-cleaned.csv')
-	uspto = pd.read_csv('new_USPTO/new_USPTO-3-149774-cleaned.csv', sep = '|', dtype=object)
-	helpers = pd.read_csv('helper/helper-3-70367-cleaned.csv', sep = '|', dtype=object)
+	uspto = pd.read_csv('../new_USPTO-3-149774-cleaned.csv', sep = '|', dtype=object)
+	helpers = pd.read_csv('../helper-3-70367-cleaned.csv', sep = '|', dtype=object)
 	result = uspto_with_inventor(uspto, helpers)
 	transaction = uspto_to_transaction(result)
 
