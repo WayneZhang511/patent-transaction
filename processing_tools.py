@@ -214,9 +214,9 @@ def uspto_to_transaction(uspto):
 	"""
 	Transform uspto formed file to transaction file.
 	"""
-
+	result_name = 'transactions/' + uspto.split('/')[1].split('.')[0] + '-transaction.csv'
 	if type(uspto) == str:
-		uspto = pd.read_csv(usoto, sep = '|', dtype=object)
+		uspto = pd.read_csv(uspto, sep = '|', dtype=object)
 
 	uspto['Patent_Number'] = uspto['PublicationID']
 	uspto['Transaction_Date'] = uspto['assignor_assignment_exe_date']
@@ -239,7 +239,7 @@ def uspto_to_transaction(uspto):
 
 	transaction = transaction[['Firm', 'Transaction_Date','Transaction','Patent_Number']]
 
-	transaction.to_csv("transaction_for_test.csv", sep='|', index = False)
+	transaction.to_csv(result_name, sep='|', index = False)
 	return transaction
 
 def get_paired_files(uspto_dir, helper_dir):
